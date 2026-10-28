@@ -1,0 +1,19 @@
+pkgbase = hypr-sens
+	pkgdesc = Save and apply Hyprland sensitivity with sens, with optional hardware DPI support
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/OwaisQuadri/hypr-sens
+	arch = any
+	license = MIT
+	depends = hyprland
+	depends = zsh
+	depends = coreutils
+	optdepends = libratbag: hardware DPI queries and changes through ratbagctl and ratbagd
+	source = sens-0.1.0::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v0.1.0/sens
+	source = LICENSE-0.1.0::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v0.1.0/LICENSE
+	source = README-0.1.0.md::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v0.1.0/README.md
+	sha256sums = 36c3bc4a3963613c952bae7d47baea524aa84d2864221f52df3c5e0c696bcf52
+	sha256sums = ede8f335faf848a05a9bf163592b3280cfef4bfad53263c1c6cf888f5f9450b5
+	sha256sums = 55fffe02db2ec5dd5ae67d73da82885d9275495bb4f2d7a8ff591e620070daa7
+
+pkgname = hypr-sens
