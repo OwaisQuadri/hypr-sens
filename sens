@@ -1,0 +1,216 @@
+#!/usr/bin/env zsh
+emulate -LR zsh
+set -eu
+export LC_ALL=C
+
+fail() {
+    print -ru2 -- "sens: $1"
+    exit "${2:-1}"
+}
+
+is_sensitivity() {
+    [[ "$1" =~ '^-?(0+([.][0-9]*)?|[.][0-9]+|0*1([.]0*)?)$' ]]
+}
+
+find_mouse() {
+    local devices line candidate allowed
+    local -a mouse_ids=()
+    mouse_id=''
+    dpi_reason=''
+    if ! command -v ratbagctl >/dev/null 2>&1; then
+        dpi_reason='ratbagctl is not installed'
+        return 1
+    fi
+    if ! devices=$(ratbagctl list 2>/dev/null); then
+        dpi_reason='could not list mice; check that ratbagd is running and accessible'
+        return 1
+    fi
+    for line in "${(@f)devices}"; do
+        [[ "$line" == *:* ]] || continue
+        candidate="${line%%:*}"
+        [[ "$candidate" =~ '^[[:alnum:]][[:alnum:]_-]*$' ]] || continue
+        if allowed=$(ratbagctl "$candidate" dpi get-all 2>/dev/null) &&
+            [[ "$allowed" =~ '^[[:blank:]]*[0-9]+([[:blank:]]+[0-9]+)*[[:blank:]]*$' ]]; then
+            mouse_ids+=("$candidate")
+        fi
+    done
+    case "${#mouse_ids}" in
+        0)
+            dpi_reason='no mouse with supported configurable DPI was found'
+            return 1
+            ;;
+        1) mouse_id="$mouse_ids[1]" ;;
+        *)
+            dpi_reason='multiple mice support configurable DPI; connect only one'
+            return 1
+            ;;
+    esac
+}
+
+if (( $# == 0 )); then
+    query_result=0
+    print -r -- 'Global Hyprland sensitivity:'
+    hyprctl getoption input:sensitivity || query_result=$?
+    if find_mouse; then
+        if dpi_output=$(ratbagctl "$mouse_id" dpi get 2>/dev/null) && [[ -n "$dpi_output" ]]; then
+            print -r -- "Hardware DPI: $dpi_output"
+        else
+            print -r -- 'Hardware DPI: unavailable (could not read the active resolution; check ratbagd).'
+        fi
+    else
+        print -r -- "Hardware DPI: unavailable ($dpi_reason)."
+    fi
+    exit "$query_result"
+fi
+
+action=set
+format=''
+value=''
+case "$1" in
+    --help)
+        (( $# == 1 )) || fail 'Usage: sens [NUMBER | --dpi VALUE | init --lua | init --legacy | --help | --version]' 2
+        cat <<'EOF'
+Usage: sens [NUMBER | --dpi VALUE | init --lua | init --legacy | --help | --version]
+
+sens                Show global Hyprland sensitivity and hardware DPI.
+sens NUMBER         Save and apply a decimal sensitivity from -1 to 1.
+sens --dpi VALUE    Commit a positive integer hardware DPI via ratbagctl.
+sens init --lua     Create sens.lua from the running global sensitivity.
+sens init --legacy  Create sens.conf from the running global sensitivity.
+sens --version      Show the version.
+
+Run init once, add its printed include at the end of your root Hyprland
+config, and reload. Init never edits your root config or overwrites a saved
+value. Persistence requires that include. Explicit per-device settings take
+precedence over the global sensitivity.
+
+Managed files use ${XDG_CONFIG_HOME:-$HOME/.config}/hypr.
+NUMBER accepts decimal notation only, without a leading + or an exponent.
+DPI support is optional and requires ratbagctl, ratbagd, and exactly one
+mouse with configurable DPI. --dpi changes only its active resolution.
+EOF
+        exit 0
+        ;;
+    --dpi)
+        (( $# == 2 )) || fail 'Usage: sens --dpi POSITIVE_INTEGER' 2
+        dpi_value="$2"
+        [[ "$dpi_value" =~ '^[0-9]*[1-9][0-9]*$' ]] || fail 'Hardware DPI must be a positive decimal integer.' 2
+        dpi_value="${dpi_value#"${dpi_value%%[!0]*}"}"
+        find_mouse || fail "Hardware DPI unavailable: $dpi_reason."
+        ratbagctl "$mouse_id" dpi set "$dpi_value" || fail "Could not set hardware DPI to $dpi_value. The value may be unsupported, or ratbagd could not commit it."
+        dpi_output=$(ratbagctl "$mouse_id" dpi get) || fail 'The DPI set command completed, but read-back failed. Hardware DPI is unverified.'
+        [[ "$dpi_output" == "${dpi_value}dpi" ]] || fail "The DPI change could not be verified. Requested ${dpi_value}dpi, but the mouse reported: $dpi_output. Hardware DPI may already have changed."
+        print -r -- "Hardware DPI: ${dpi_value}dpi (committed to the active profile and resolution)."
+        exit 0
+        ;;
+    --version)
+        (( $# == 1 )) || fail 'Usage: sens --version' 2
+        print -r -- 'sens 0.1.0'
+        exit 0
+        ;;
+    init)
+        (( $# == 2 )) || fail 'Usage: sens init --lua | sens init --legacy' 2
+        case "$2" in
+            --lua) format=lua ;;
+            --legacy) format=legacy ;;
+            *) fail 'Usage: sens init --lua | sens init --legacy' 2 ;;
+        esac
+        action=init
+        ;;
+    *)
+        (( $# == 1 )) || fail 'Usage: sens NUMBER' 2
+        value="$1"
+        is_sensitivity "$value" || fail 'Sensitivity must be a decimal number from -1 to 1, without a leading + or an exponent.' 2
+        ;;
+esac
+
+config_root="${XDG_CONFIG_HOME:-${HOME:?HOME must be set}/.config}"
+[[ "$config_root" == /* ]] || fail 'The config root must be an absolute path.'
+[[ "$config_root" != *$'\n'* && "$config_root" != *$'\r'* ]] || fail 'The config root cannot contain a newline or carriage return.'
+config_dir="$config_root/hypr"
+lua_config="$config_dir/sens.lua"
+legacy_config="$config_dir/sens.conf"
+existing_format=''
+if [[ -e "$lua_config" || -L "$lua_config" ]]; then
+    existing_format=lua
+fi
+if [[ -e "$legacy_config" || -L "$legacy_config" ]]; then
+    [[ -z "$existing_format" ]] || fail 'Both sens.lua and sens.conf exist. Keep only the format your root config includes, then retry.'
+    existing_format=legacy
+fi
+
+if [[ "$action" == set ]]; then
+    [[ -n "$existing_format" ]] || fail 'No managed snippet exists. Run sens init --lua or sens init --legacy and follow its include instructions first.'
+    format="$existing_format"
+elif [[ -n "$existing_format" && "$format" != "$existing_format" ]]; then
+    fail "A $existing_format snippet already exists. Remove it and its include before switching formats."
+fi
+
+case "$format" in
+    lua) config="$lua_config" ;;
+    legacy)
+        for character in '#' '$' '*' '?' '[' ']' '\'; do
+            [[ "$config_dir" != *"$character"* ]] || fail 'Legacy config paths cannot contain #, $, *, ?, [, ], or backslash. Use a different absolute config root.'
+        done
+        config="$legacy_config"
+        ;;
+esac
+
+if [[ -n "$existing_format" ]]; then
+    [[ -f "$config" && ! -L "$config" ]] || fail "Managed snippet must be a regular file, not a symlink: $config"
+fi
+
+if [[ "$action" == set || -z "$existing_format" ]]; then
+    if [[ "$action" == init ]]; then
+        option=$(hyprctl getoption input:sensitivity) || fail 'Could not read the running global sensitivity. No snippet was created.'
+        for line in "${(@f)option}"; do
+            if [[ "$line" =~ '^[[:blank:]]*float:[[:blank:]]*([^[:blank:]]+)[[:blank:]]*$' ]]; then
+                value="$match[1]"
+                break
+            fi
+        done
+        is_sensitivity "$value" || fail 'hyprctl did not return a decimal global sensitivity from -1 to 1. No snippet was created.'
+        mkdir -p -- "$config_dir" || fail "Could not create config directory: $config_dir"
+    fi
+
+    temporary=$(mktemp "$config_dir/.sens.XXXXXX") || fail "Could not create a temporary snippet in: $config_dir"
+    trap 'rm -f -- "$temporary"' EXIT
+    trap 'exit 1' HUP INT TERM
+    case "$format" in
+        lua) content="hl.config({ input = { sensitivity = $value } })" ;;
+        legacy) content="input:sensitivity = $value" ;;
+    esac
+    print -r -- "$content" > "$temporary" || fail 'Could not write the snippet. The saved sensitivity was not changed.'
+    if [[ "$action" == init ]]; then
+        ln -- "$temporary" "$config" || fail "Could not create $config. No existing snippet was overwritten."
+    else
+        mv -fT -- "$temporary" "$config" || fail 'Could not replace the snippet. The saved sensitivity was not changed.'
+    fi
+fi
+
+if [[ "$action" == init ]]; then
+    print -r -- "Managed snippet: $config"
+    print -r -- 'Add this line once at the END of your root Hyprland config:'
+    case "$format" in
+        lua)
+            hook="${config//\\/\\\\}"
+            hook="${hook//\"/\\\"}"
+            hook="${hook//$'\t'/\\t}"
+            print -r -- "dofile(\"$hook\")"
+            ;;
+        legacy) print -r -- "source = $config" ;;
+    esac
+    print -r -- 'Then run hyprctl reload. Persistence requires this include.'
+    print -r -- 'Any existing saved value was kept. Explicit per-device sensitivities take precedence over this global setting.'
+    exit 0
+fi
+
+case "$format" in
+    lua)
+        hyprctl eval "hl.config({ input = { sensitivity = $value } })" || fail "Saved sensitivity $value, but could not apply it to the running desktop. The saved snippet remains in $config."
+        ;;
+    legacy)
+        hyprctl keyword input:sensitivity "$value" || fail "Saved sensitivity $value, but could not apply it to the running desktop. The saved snippet remains in $config."
+        ;;
+esac
+print -r -- "Global sensitivity: $value (saved)."

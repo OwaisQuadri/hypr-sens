@@ -1,0 +1,25 @@
+pkgname=hypr-sens
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Save and apply Hyprland sensitivity with sens, with optional hardware DPI support'
+arch=('any')
+url='https://github.com/OwaisQuadri/hypr-sens'
+license=('MIT')
+depends=('hyprland' 'zsh' 'coreutils')
+optdepends=('libratbag: hardware DPI queries and changes through ratbagctl and ratbagd')
+source=(
+    "sens-${pkgver}::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v${pkgver}/sens"
+    "LICENSE-${pkgver}::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v${pkgver}/LICENSE"
+    "README-${pkgver}.md::https://raw.githubusercontent.com/OwaisQuadri/hypr-sens/v${pkgver}/README.md"
+)
+sha256sums=(
+    '36c3bc4a3963613c952bae7d47baea524aa84d2864221f52df3c5e0c696bcf52'
+    'ede8f335faf848a05a9bf163592b3280cfef4bfad53263c1c6cf888f5f9450b5'
+    '55fffe02db2ec5dd5ae67d73da82885d9275495bb4f2d7a8ff591e620070daa7'
+)
+
+package() {
+    install -Dm755 "${srcdir}/sens-${pkgver}" "${pkgdir}/usr/bin/sens"
+    install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 "${srcdir}/README-${pkgver}.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
